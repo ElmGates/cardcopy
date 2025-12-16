@@ -1,0 +1,82 @@
+{
+    "app": {
+        "name": "CardCopyer-拷贝乐",
+        "version": "1.1.2",
+        "author": "SuperJia",
+        "description": "现代化的DIT拷卡软件"
+    },
+    "ui": {
+        "theme": "darkly",
+        "window_size": [1400, 900],
+        "font_family": "Segoe UI",
+        "font_size": 11,
+        "colors": {
+            "primary": "#007acc",
+            "secondary": "#6c757d",
+            "success": "#28a745",
+            "info": "#17a2b8",
+            "warning": "#ffc107",
+            "danger": "#dc3545",
+            "light": "#f8f9fa",
+            "dark": "#343a40"
+        }
+    },
+    "copy": {
+        "buffer_size": 8192,
+        "max_threads": 4,
+        "retry_count": 3,
+        "retry_delay": 1,
+        "verify_after_copy": true,
+        "create_checksum_file": true,
+        "auto_rename_duplicates": true
+    },
+    "verification": {
+        "enable_md5": true,
+        "verify_chunk_size": 8192,
+        "parallel_verification": true,
+        "verification_threads": 2,
+        "skip_verification_for_small_files": false,
+        "small_file_threshold": 1024
+    },
+    "logging": {
+        "level": "INFO",
+        "log_to_file": true,
+        "log_file": "dit_copy_tool.log",
+        "max_log_size": 10485760,
+        "backup_count": 5,
+        "log_format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    },
+    "performance": {
+        "update_interval": 100,
+        "progress_refresh_rate": 50,
+        "memory_optimization": true,
+        "cache_size": 1000
+    },
+    "safety": {
+        "confirm_before_overwrite": true,
+        "backup_before_copy": false,
+        "check_disk_space": true,
+        "min_free_space_gb": 1,
+        "exclude_system_files": true,
+        "exclude_patterns": [
+            "*.tmp",
+            "*.temp",
+            "Thumbs.db",
+            ".DS_Store",
+            "*.log"
+        ]
+    },
+    "notifications": {
+        "show_completion_notification": true,
+        "play_sound": true,
+        "sound_file": "completion.wav",
+        "celebration_animation": true,
+        "auto_close_celebration": 3000
+    },
+    "advanced": {
+        "enable_experimental_features": false,
+        "debug_mode": false,
+        "profile_performance": false,
+        "enable_telemetry": false
+    }
+}
