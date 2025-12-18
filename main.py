@@ -172,6 +172,34 @@ def full_check_dependencies():
     
     return True, None
 
+class Tooltip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip = None
+        widget.bind("<Enter>", self.show)
+        widget.bind("<Leave>", self.hide)
+        widget.bind("<Motion>", self.move)
+    def show(self, event=None):
+        if self.tip or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 10
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(self.tip, text=self.text, justify="left", relief="solid", borderwidth=1, background="#ffffe0", foreground="#333", font=("Arial", 10))
+        label.pack(padx=8, pady=6)
+    def move(self, event):
+        if self.tip:
+            x = event.x_root + 12
+            y = event.y_root + 12
+            self.tip.wm_geometry(f"+{x}+{y}")
+    def hide(self, event=None):
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
 class CopyManager:
     """拷贝管理器 - 优化性能和资源管理"""
     def __init__(self):
@@ -465,6 +493,13 @@ class DITCopyTool:
         self.source_items = []  # 源项目列表
         self.destination_path = ""
         self.copy_thread = None
+        self.media_extensions = {
+            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp", ".heic", ".heif",
+            ".cr2", ".cr3", ".nef", ".arw", ".dng", ".rw2", ".orf", ".raf", ".srw", ".pef", ".rwl",
+            ".r3d", ".braw", ".ari", ".cine",
+            ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".m4v", ".webm", ".mxf", ".mts", ".m2ts", ".ts", ".3gp", ".3g2",
+            ".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".aiff", ".aif", ".wma"
+        }
         
         # 延迟UI初始化（窗口仍在隐藏状态）
         self.window.after(100, self._show_main_window_with_icon)
@@ -640,8 +675,14 @@ class DITCopyTool:
         # 左侧 - 源选择
         self.setup_source_frame(content_frame)
         
+        # 中间列容器
+        middle_column = tb.Frame(content_frame)
+        middle_column.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        
         # 中间 - 目的地选择
-        self.setup_destination_frame(content_frame)
+        self.setup_destination_frame(middle_column)
+        # 中间 - 设置
+        self.setup_settings_frame(middle_column)
         
         # 右侧 - 进度显示
         self.setup_progress_frame(content_frame)
@@ -740,7 +781,7 @@ class DITCopyTool:
             bootstyle="info",
             padding=15
         )
-        dest_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        dest_frame.pack(fill="x", padx=(0, 10))
         
         # 目的地路径显示
         self.dest_path_label = tb.Label(
@@ -759,10 +800,21 @@ class DITCopyTool:
             bootstyle="info",
             command=self.select_destination
         )
-        select_dest_btn.pack(pady=(0, 20))
+        select_dest_btn.pack(pady=(0, 10))
         
         # 自动创建文件夹（默认启用，不再显示选框）
         self.auto_folder_var = tk.BooleanVar(value=True)
+        
+        # 自动日期前缀开关
+        self.auto_date_prefix_var = tk.BooleanVar(value=True)
+        date_prefix_cb = tb.Checkbutton(
+            dest_frame,
+            text="自动添加日期前缀",
+            variable=self.auto_date_prefix_var,
+            bootstyle="info-round-toggle",
+            command=self.update_folder_preview
+        )
+        date_prefix_cb.pack(pady=(0, 10))
         
         # 项目名称输入区域
         project_frame = tb.Frame(dest_frame)
@@ -786,7 +838,7 @@ class DITCopyTool:
         # 项目名称提示
         tb.Label(
             dest_frame,
-            text="留空则只使用日期命名",
+            text="关闭日期前缀时必须输入项目名称",
             font=("Arial", 9),
             bootstyle="secondary"
         ).pack(pady=(0, 5))
@@ -811,6 +863,93 @@ class DITCopyTool:
         
         # 绑定项目名称变化事件，实时更新预览
         self.project_name_var.trace_add("write", lambda *args: self.update_folder_preview())
+        self.update_folder_preview()
+
+    def setup_settings_frame(self, parent):
+        settings_frame = ttk.LabelFrame(
+            parent,
+            text="设置",
+            bootstyle="secondary",
+            padding=10
+        )
+        settings_frame.pack(fill="x", pady=(15, 0))
+        
+        settings_row = tb.Frame(settings_frame)
+        settings_row.pack(fill="x")
+        
+        self.only_media_var = tk.BooleanVar(value=False)
+        only_media_cb = tb.Checkbutton(
+            settings_row,
+            text="是否只拷贝媒体文件",
+            variable=self.only_media_var,
+            bootstyle="info-round-toggle",
+            command=self.on_only_media_toggle
+        )
+        only_media_cb.pack(side="left")
+        
+        help_label = tb.Label(
+            settings_row,
+            text="?",
+            font=("Arial", 10, "bold"),
+            bootstyle="info",
+            cursor="hand2"
+        )
+        help_label.pack(side="left", padx=(8, 0))
+        Tooltip(help_label, "启用后仅拷贝常见媒体文件（图片、视频、音频、RAW）。不拷贝文档、工程文件等。")
+        
+        btn_row = tb.Frame(settings_frame)
+        btn_row.pack(fill="x", pady=(10, 0))
+        self.edit_media_btn = tb.Button(
+            btn_row,
+            text="编辑媒体文件类型",
+            bootstyle="info",
+            command=self.open_media_types_editor,
+            state="disabled",
+            width=20
+        )
+        self.edit_media_btn.pack(side="left")
+        self.on_only_media_toggle()
+    
+    def on_only_media_toggle(self):
+        if self.only_media_var.get():
+            self.edit_media_btn.config(state="normal")
+            messagebox.showinfo("危险！！", "此操作很危险！！开启仅拷贝媒体文件后，非媒体文件将被忽略。请核对文件类型是否正确，如果空间足够不建议打开。")
+        else:
+            self.edit_media_btn.config(state="disabled")
+    
+    def open_media_types_editor(self):
+        editor = tk.Toplevel(self.window)
+        editor.title("编辑媒体文件类型")
+        editor.geometry("400x500")
+        editor.transient(self.window)
+        editor.grab_set()
+        
+        text = tk.Text(editor, font=("Courier", 11))
+        text.pack(fill="both", expand=True)
+        initial = "\n".join(sorted(self.get_media_extensions()))
+        text.insert("1.0", initial)
+        
+        button_frame = tb.Frame(editor, padding=10)
+        button_frame.pack(fill="x")
+        
+        def save():
+            content = text.get("1.0", "end").strip().splitlines()
+            cleaned = set()
+            for line in content:
+                s = line.strip().lower()
+                if not s:
+                    continue
+                if not s.startswith("."):
+                    s = "." + s
+                cleaned.add(s)
+            if cleaned:
+                self.media_extensions = cleaned
+            editor.destroy()
+        
+        save_btn = tb.Button(button_frame, text="保存", bootstyle="success", command=save, width=12)
+        save_btn.pack(side="right", padx=(10, 0))
+        cancel_btn = tb.Button(button_frame, text="取消", bootstyle="secondary", command=editor.destroy, width=12)
+        cancel_btn.pack(side="right")
         
     def setup_progress_frame(self, parent):
         """设置进度显示框架"""
@@ -956,7 +1095,7 @@ class DITCopyTool:
         # 版权信息标签（可点击）
         copyright_label = tb.Label(
             bottom_frame,
-            text="Copyright ©️ 2025-Now SuperJia 保留所有权利，CardCopyer-拷贝乐 v1.1.2(beta) 点击前往官网",
+            text="Copyright ©️ 2025-Now SuperJia 保留所有权利，CardCopyer-拷贝乐 v1.1.3(beta) 点击前往官网",
             font=("Arial", 9),
             bootstyle="secondary",
             cursor="hand2"  # 鼠标悬停时显示手型光标
@@ -1188,24 +1327,37 @@ class DITCopyTool:
             
     def update_folder_preview(self):
         """更新文件夹名称预览"""
-        if not hasattr(self, 'destination_path') or not self.destination_path:
-            self.folder_preview_label.config(text="")
-            return
-            
-        # 生成预览文件夹名称（自动创建文件夹始终启用）
+        # 生成预览文件夹名称
         from datetime import datetime
-        date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         project_name = self.project_name_var.get().strip()
         
+        # 清理项目名称中的特殊字符
+        safe_project_name = ""
         if project_name:
-            # 清理项目名称中的特殊字符
             safe_project_name = "".join(c for c in project_name if c.isalnum() or c in "-_ ")
             safe_project_name = safe_project_name.strip().replace(" ", "_")
-            folder_name = f"{date_str}_{safe_project_name}"
+            
+        if self.auto_date_prefix_var.get():
+            date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if safe_project_name:
+                folder_name = f"{date_str}_{safe_project_name}"
+            else:
+                folder_name = date_str
         else:
-            folder_name = date_str
+            # 不使用日期前缀
+            if safe_project_name:
+                folder_name = safe_project_name
+            else:
+                folder_name = "(需输入项目名称)"
             
         self.folder_preview_label.config(text=f"📁 将创建文件夹: {folder_name}")
+    
+    def get_media_extensions(self):
+        return getattr(self, "media_extensions", set())
+    
+    def is_media_file(self, file_path):
+        ext = os.path.splitext(file_path)[1].lower()
+        return ext in self.get_media_extensions()
             
     def start_copy(self):
         """开始拷贝"""
@@ -1216,6 +1368,19 @@ class DITCopyTool:
         if not self.destination_path:
             messagebox.showwarning("警告", "请先选择目的地")
             return
+            
+        # 验证项目名称
+        if not self.auto_date_prefix_var.get():
+            project_name = self.project_name_var.get().strip()
+            if not project_name:
+                messagebox.showwarning("警告", "关闭自动日期前缀后，必须输入项目名称！")
+                return
+                
+            # 检查有效字符
+            safe_name = "".join(c for c in project_name if c.isalnum() or c in "-_ ")
+            if not safe_name.strip():
+                messagebox.showwarning("警告", "项目名称必须包含字母、数字、下划线或连字符！")
+                return
             
         # 禁用开始按钮，启用停止按钮
         self.start_btn.config(state="disabled")
@@ -1257,20 +1422,25 @@ class DITCopyTool:
             
             # 创建目标文件夹
             if self.auto_folder_var.get():
-                # 生成日期文件夹并保存，确保拷贝和验证使用相同的时间戳
+                # 生成文件夹名称
                 if self.copy_manager.date_folder is None:
-                    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
                     project_name = self.project_name_var.get().strip()
                     
-                    # 如果有项目名称，格式为：日期_项目名称
+                    # 清理项目名称
+                    safe_project_name = ""
                     if project_name:
-                        # 清理项目名称中的特殊字符，确保文件夹名安全
                         safe_project_name = "".join(c for c in project_name if c.isalnum() or c in "-_ ")
                         safe_project_name = safe_project_name.strip().replace(" ", "_")
-                        self.copy_manager.date_folder = f"{date_str}_{safe_project_name}"
+                    
+                    if self.auto_date_prefix_var.get():
+                        date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        if safe_project_name:
+                            self.copy_manager.date_folder = f"{date_str}_{safe_project_name}"
+                        else:
+                            self.copy_manager.date_folder = date_str
                     else:
-                        # 没有项目名称，只使用日期
-                        self.copy_manager.date_folder = date_str
+                        # 不使用日期前缀，使用项目名称
+                        self.copy_manager.date_folder = safe_project_name
                         
                 final_dest = os.path.join(self.destination_path, self.copy_manager.date_folder)
             else:
@@ -1285,9 +1455,11 @@ class DITCopyTool:
             self.log_message("正在统计文件...")
             for source_item in self.source_items:
                 for root, dirs, files in os.walk(source_item['path']):
-                    self.copy_manager.total_files += len(files)
                     for file in files:
                         file_path = os.path.join(root, file)
+                        if self.only_media_var.get() and not self.is_media_file(file_path):
+                            continue
+                        self.copy_manager.total_files += 1
                         try:
                             self.copy_manager.total_size += os.path.getsize(file_path)
                         except:
@@ -1446,6 +1618,9 @@ class DITCopyTool:
                     
                 source_file = os.path.join(root, file)
                 dest_file = os.path.join(current_dest, file)
+                
+                if self.only_media_var.get() and not self.is_media_file(source_file):
+                    continue
                 
                 try:
                     # 获取文件大小
@@ -1774,6 +1949,17 @@ class DITCopyTool:
         self.verify_progress.config(value=100)
         self.copy_status_label.config(text="拷贝完成！")
         self.verify_status_label.config(text="验证完成！")
+        
+        # 仅媒体拷贝提示
+        try:
+            if hasattr(self, "only_media_var") and self.only_media_var.get():
+                messagebox.showwarning(
+                    "提示",
+                    "已开启“仅拷贝媒体文件”。请注意：文档、工程、缓存等非媒体文件可能未被拷贝。\n\n"
+                    "建议立即核对源与目标文件夹，确认是否需要补拷。"
+                )
+        except Exception:
+            pass
         
         # 关闭日志文件
         self.copy_manager.close_log_file()
