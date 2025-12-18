@@ -8,6 +8,7 @@
   <p>
     <a href="#-下载--download">下载</a> •
     <a href="#-核心功能--features">功能</a> •
+    <a href="#-更新日志--logs">更新日志</a> •
     <a href="#-开发指南--development">开发</a> •
     <a href="#-版权--copyright">版权</a>
   </p>
@@ -35,6 +36,17 @@
 - 🖥️ **跨平台支持**: 完美支持 Windows 10+ 及 macOS (Apple Silicon)。
 - 🎨 **现代界面**: 基于 ttkbootstrap 的现代化深色主题界面，不仅美观，更适合片场暗光环境工作。
 
+## 📝 更新日志 / Logs
+
+### 版本 1.1.2b （2025-12-16）
+- 初始版本发布，包含基础的拷卡功能。
+
+### 版本 1.1.3b （2025-12-18）
+- 新增“是否只拷贝媒体文件”功能及悬浮说明。
+- 扩展媒体类型支持：r3d、braw、ari、cine、heic/heif、mxf、mts 等。
+- 拷贝完成时在开启媒体过滤情况下新增提醒弹窗。
+- 文件夹名称预览逻辑优化，支持关闭日期前缀。
+
 ## 🛠️ 开发指南 / Development
 
 如果您是开发者，想从源码运行或参与开发，请遵循以下步骤：
@@ -59,7 +71,7 @@ python main.py
 ```
 
 ### 4. 打包发布
-本项目使用 PyInstaller 进行打包。详细的打包说明请参考 [PACKAGING.md](readme/PACKAGING.md)。
+本项目使用 PyInstaller 进行打包。可参考 [PACKAGING.md](readme/PACKAGING.md)。
 
 ## 📄 版权 / Copyright
 
