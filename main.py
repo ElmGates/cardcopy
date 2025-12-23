@@ -205,6 +205,7 @@ class CopyManager:
     def __init__(self):
         self.copying = False
         self.verifying = False
+        self.backup_copying = False
         self.total_files = 0
         self.copied_files = 0
         self.verified_files = 0
@@ -240,6 +241,16 @@ class CopyManager:
         # 性能优化：缓存文件大小计算结果
         self._size_cache = {}
         self._size_cache_timeout = 5  # 缓存超时时间（秒）
+        
+        # 备用拷贝进度相关
+        self.backup_total_files = 0
+        self.backup_copied_files = 0
+        self.backup_total_size = 0
+        self.backup_copied_size = 0
+        self.total_backup_destinations = 0
+        self.current_backup_index = 0
+        self.backup_start_time = 0
+        self.backup_results = []
     
     def get_folder_size(self, folder_path: str) -> int:
         """计算文件夹总大小（字节）- 使用缓存优化"""
@@ -470,6 +481,9 @@ class DITCopyTool:
             size=(1400, 900),
             resizable=(True, True)
         )
+        self.original_theme = "darkly"
+        self.christmas_mode = False
+        self.christmas_bg_canvas = None
         
         # 立即隐藏窗口，防止显示默认图标
         self.window.withdraw()
@@ -656,17 +670,17 @@ class DITCopyTool:
     def setup_ui(self):
         """设置UI界面"""
         # 主框架
-        main_frame = tb.Frame(self.window, padding=20)
-        main_frame.pack(fill="both", expand=True)
+        self.main_frame = tb.Frame(self.window, padding=20)
+        self.main_frame.pack(fill="both", expand=True)
+        main_frame = self.main_frame
         
-        # 标题
-        title_label = tb.Label(
-            main_frame,
-            text="CardCopyer-拷贝乐",
-            font=("Arial", 24, "bold"),
-            bootstyle="primary"
-        )
-        title_label.pack(pady=(0, 20))
+        header_frame = tb.Frame(main_frame)
+        header_frame.pack(fill="x")
+        title_label = tb.Label(header_frame, text="CardCopyer-拷贝乐", font=("Arial", 24, "bold"), bootstyle="primary")
+        title_label.pack(side="left", pady=(0, 20))
+        self.christmas_btn = tb.Button(header_frame, text="🎄", bootstyle="success", width=3, command=self.toggle_christmas_theme)
+        if self.is_christmas_period():
+            self.christmas_btn.pack(side="right", pady=(0, 20))
         
         # 主要内容区域
         content_frame = tb.Frame(main_frame)
@@ -864,6 +878,59 @@ class DITCopyTool:
         # 绑定项目名称变化事件，实时更新预览
         self.project_name_var.trace_add("write", lambda *args: self.update_folder_preview())
         self.update_folder_preview()
+        
+        self.backup_dest_paths = []
+        self.multi_dest_frame = ttk.LabelFrame(
+            dest_frame,
+            text="备用目的地",
+            bootstyle="secondary",
+            padding=10
+        )
+        
+        backup_list_row = tb.Frame(self.multi_dest_frame)
+        backup_list_row.pack(fill="x")
+        
+        self.backup_dest_listbox = tk.Listbox(
+            backup_list_row,
+            height=5,
+            font=("Arial", 10),
+            bg="#1e1e1e",
+            fg="white",
+            selectbackground="#005a9e"
+        )
+        self.backup_dest_listbox.pack(side="left", fill="both", expand=True)
+        
+        backup_scroll = tb.Scrollbar(backup_list_row)
+        backup_scroll.pack(side="right", fill="y")
+        self.backup_dest_listbox.config(yscrollcommand=backup_scroll.set)
+        backup_scroll.config(command=self.backup_dest_listbox.yview)
+        
+        backup_btn_row = tb.Frame(self.multi_dest_frame)
+        backup_btn_row.pack(fill="x", pady=(10, 0))
+        
+        add_backup_btn = tb.Button(
+            backup_btn_row,
+            text="添加备用目的地",
+            bootstyle="info",
+            command=self.add_backup_destination
+        )
+        add_backup_btn.pack(side="left")
+        
+        remove_backup_btn = tb.Button(
+            backup_btn_row,
+            text="移除选中",
+            bootstyle="danger-outline",
+            command=self.remove_selected_backup_destination
+        )
+        remove_backup_btn.pack(side="left", padx=(10, 0))
+        
+        set_primary_btn = tb.Button(
+            backup_btn_row,
+            text="设为主目的地",
+            bootstyle="warning-outline",
+            command=self.set_primary_destination
+        )
+        set_primary_btn.pack(side="right")
 
     def setup_settings_frame(self, parent):
         settings_frame = ttk.LabelFrame(
@@ -909,13 +976,44 @@ class DITCopyTool:
         )
         self.edit_media_btn.pack(side="left")
         self.on_only_media_toggle()
+        
+        self.multi_dest_var = tk.BooleanVar(value=False)
+        multi_dest_cb = tb.Checkbutton(
+            settings_frame,
+            text="多目的地备份",
+            variable=self.multi_dest_var,
+            bootstyle="info-round-toggle",
+            command=self.on_multi_dest_toggle
+        )
+        multi_dest_cb.pack(pady=(10, 0), anchor="w")
     
     def on_only_media_toggle(self):
         if self.only_media_var.get():
             self.edit_media_btn.config(state="normal")
-            messagebox.showinfo("危险！！", "此操作很危险！！开启仅拷贝媒体文件后，非媒体文件将被忽略。请核对文件类型是否正确，如果空间足够不建议打开。")
+            messagebox.showinfo("提示", "已开启仅拷贝媒体文件，请核对文件类型是否正确。")
         else:
             self.edit_media_btn.config(state="disabled")
+    
+    def on_multi_dest_toggle(self):
+        if hasattr(self, "multi_dest_frame"):
+            if self.multi_dest_var.get():
+                self.multi_dest_frame.pack(fill="x", pady=(10, 0))
+                if hasattr(self, "backup_progress_title"):
+                    self.backup_progress_title.pack(anchor="w", pady=(20, 5))
+                if hasattr(self, "backup_progress"):
+                    self.backup_progress.pack(fill="x", pady=(5, 15))
+                if hasattr(self, "backup_status_label"):
+                    self.backup_status_label.pack(anchor="w")
+            else:
+                self.multi_dest_frame.forget()
+                if hasattr(self, "backup_progress_title"):
+                    self.backup_progress_title.pack_forget()
+                if hasattr(self, "backup_progress"):
+                    self.backup_progress.pack_forget()
+                    self.backup_progress.config(value=0)
+                if hasattr(self, "backup_status_label"):
+                    self.backup_status_label.pack_forget()
+                    self.backup_status_label.config(text="等待备用拷贝...")
     
     def open_media_types_editor(self):
         editor = tk.Toplevel(self.window)
@@ -1013,6 +1111,23 @@ class DITCopyTool:
         )
         self.verify_speed_label.pack(anchor="w", pady=(2, 0))
         
+        self.backup_progress_title = tb.Label(progress_frame, text="备用拷贝进度:", font=("Arial", 12, "bold"))
+        
+        self.backup_progress = tb.Progressbar(
+            progress_frame,
+            bootstyle="info-striped",
+            length=300,
+            mode='determinate'
+        )
+        
+        
+        self.backup_status_label = tb.Label(
+            progress_frame,
+            text="等待备用拷贝...",
+            font=("Arial", 10)
+        )
+        
+        
         # 统计信息
         stats_frame = tb.Frame(progress_frame)
         stats_frame.pack(fill="x", pady=(20, 0))
@@ -1095,7 +1210,7 @@ class DITCopyTool:
         # 版权信息标签（可点击）
         copyright_label = tb.Label(
             bottom_frame,
-            text="Copyright ©️ 2025-Now SuperJia 保留所有权利，CardCopyer-拷贝乐 v1.1.3(beta) 点击前往官网",
+            text="Copyright ©️ 2025-Now SuperJia 保留所有权利，CardCopyer-拷贝乐 v1.1.5(beta) 点击前往官网",
             font=("Arial", 9),
             bootstyle="secondary",
             cursor="hand2"  # 鼠标悬停时显示手型光标
@@ -1114,6 +1229,30 @@ class DITCopyTool:
             width=15
         )
         exit_btn.pack(side="right")
+        
+    def is_christmas_period(self):
+        from datetime import datetime
+        now = datetime.now()
+        return now.month == 12 and 20 <= now.day <= 30
+    
+    def toggle_christmas_theme(self):
+        if not self.is_christmas_period():
+            return
+        if not self.christmas_mode:
+            try:
+                self.window.style.theme_use("minty")
+            except Exception:
+                try:
+                    self.window.style.theme_use("flatly")
+                except Exception:
+                    self.window.style.theme_use(self.original_theme)
+            self.christmas_mode = True
+        else:
+            try:
+                self.window.style.theme_use(self.original_theme)
+            except Exception:
+                pass
+            self.christmas_mode = False
         
     def format_time(self, seconds):
         """格式化时间显示"""
@@ -1311,6 +1450,7 @@ class DITCopyTool:
         if folder:
             self.destination_path = folder
             self.dest_path_label.config(text=folder)
+            self.update_folder_preview()
             
             # 更新目的地信息
             try:
@@ -1322,8 +1462,53 @@ class DITCopyTool:
                 
             self.log_message(f"选择目的地: {folder}")
             
-            # 更新文件夹预览
-            self.update_folder_preview()
+            # 同步UI
+            if self.multi_dest_var.get():
+                pass
+    
+    def add_backup_destination(self):
+        if len(self.backup_dest_paths) >= 10:
+            messagebox.showwarning("提示", "最多只能添加10个备用目的地")
+            return
+        folder = filedialog.askdirectory(title="选择备用目的地文件夹")
+        if folder:
+            if folder == self.destination_path or folder in self.backup_dest_paths:
+                messagebox.showinfo("提示", "该目的地已存在或与主目的地重复")
+                return
+            self.backup_dest_paths.append(folder)
+            self.backup_dest_listbox.insert(tk.END, folder)
+            self.log_message(f"添加备用目的地: {folder}")
+    
+    def remove_selected_backup_destination(self):
+        selection = self.backup_dest_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("提示", "请先选择要移除的备用目的地")
+            return
+        for idx in reversed(selection):
+            removed = self.backup_dest_paths.pop(idx)
+            self.backup_dest_listbox.delete(idx)
+            self.log_message(f"移除备用目的地: {removed}")
+    
+    def set_primary_destination(self):
+        selection = self.backup_dest_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("提示", "请从备用目的地列表中选择一个作为主目的地")
+            return
+        if len(selection) > 1:
+            messagebox.showinfo("提示", "一次只能设置一个主目的地")
+            return
+        idx = selection[0]
+        new_primary = self.backup_dest_paths.pop(idx)
+        old_primary = self.destination_path
+        self.destination_path = new_primary
+        self.dest_path_label.config(text=new_primary)
+        self.update_folder_preview()
+        if old_primary:
+            self.backup_dest_paths.append(old_primary)
+            self.backup_dest_listbox.insert(tk.END, old_primary)
+        self.backup_dest_listbox.delete(idx)
+        self.log_message(f"设置主目的地为: {new_primary}")
+            
             
     def update_folder_preview(self):
         """更新文件夹名称预览"""
@@ -1483,6 +1668,39 @@ class DITCopyTool:
             # 开始验证
             if self.copy_manager.copying and self.copy_manager.copied_files > 0:
                 self.verify_files()
+            
+            if self.copy_manager.copying and self.multi_dest_var.get() and self.backup_dest_paths:
+                self.log_message("开始拷贝到备用目的地")
+                self.copy_manager.backup_copying = True
+                if self.auto_folder_var.get():
+                    backup_date_folder = self.copy_manager.date_folder
+                self.copy_manager.total_backup_destinations = len(self.backup_dest_paths)
+                for backup_dest in self.backup_dest_paths:
+                    if not self.copy_manager.copying:
+                        break
+                    self.copy_manager.current_backup_index += 1
+                    self.copy_manager.backup_start_time = time.time()
+                    self.copy_manager.backup_total_files = self.copy_manager.total_files
+                    self.copy_manager.backup_total_size = self.copy_manager.total_size
+                    self.copy_manager.backup_copied_files = 0
+                    self.copy_manager.backup_copied_size = 0
+                    self.backup_progress.config(value=0)
+                    if self.auto_folder_var.get():
+                        backup_final_dest = os.path.join(backup_dest, backup_date_folder)
+                    else:
+                        backup_final_dest = backup_dest
+                    os.makedirs(backup_final_dest, exist_ok=True)
+                    self.log_message(f"创建备用目标文件夹: {backup_final_dest}")
+                    self.backup_status_label.config(text=f"正在拷贝到备用目的地 {self.copy_manager.current_backup_index}/{self.copy_manager.total_backup_destinations}: {backup_dest}")
+                    for source_item in self.source_items:
+                        if not self.copy_manager.copying:
+                            break
+                        folder_name = source_item.get('custom_name', source_item['name'])
+                        self.copy_folder(source_item['path'], backup_final_dest, folder_name)
+                    self.backup_progress.config(value=100)
+                self.copy_manager.backup_copying = False
+                self.log_message("备用目的地拷贝完成")
+                self.verify_backup_destinations()
                 
             # 完成
             if self.copy_manager.copying:
@@ -1549,19 +1767,17 @@ class DITCopyTool:
                                 last_progress_log = current_time
                             
                             # 批量更新进度（减少UI更新频率）
-                            if self.copy_manager.total_size > 0:
+                            if not self.copy_manager.backup_copying and self.copy_manager.total_size > 0:
                                 file_progress_ratio = copied_size / file_size if file_size > 0 else 0
                                 temp_copied_size = self.copy_manager.copied_size + (file_size * file_progress_ratio)
                                 temp_copied_size = min(temp_copied_size, self.copy_manager.total_size)
-                                
-                                # 只在有显著变化时更新UI
-                                if abs(temp_copied_size - self.copy_manager.copied_size) > (self.copy_manager.total_size * 0.01):  # 变化超过1%
+                                if abs(temp_copied_size - self.copy_manager.copied_size) > (self.copy_manager.total_size * 0.01):
                                     original_copied_size = self.copy_manager.copied_size
                                     self.copy_manager.copied_size = temp_copied_size
                                     self.update_progress()
                                     self.copy_manager.copied_size = original_copied_size
                             
-                            self.window.update()  # 刷新界面
+                            self.window.update()
                             last_update_time = current_time
                             
         except Exception as e:
@@ -1657,17 +1873,17 @@ class DITCopyTool:
                     
                     # 文件拷贝完成，更新进度
                     copy_time = time.time() - copy_start
-                    self.copy_manager.copied_files += 1
-                    
-                    # 确保总大小正确（在文件拷贝完成后更新总大小）
-                    self.copy_manager.copied_size += file_size
-                    
-                    # 计算速度
-                    if copy_time > 0:
-                        file_speed = file_size / copy_time  # 字节/秒
-                        self.copy_manager.copy_speed = file_speed
-                    
-                    self.update_progress()
+                    if self.copy_manager.backup_copying:
+                        self.copy_manager.backup_copied_files += 1
+                        self.copy_manager.backup_copied_size += file_size
+                        self.update_backup_progress()
+                    else:
+                        self.copy_manager.copied_files += 1
+                        self.copy_manager.copied_size += file_size
+                        if copy_time > 0:
+                            file_speed = file_size / copy_time
+                            self.copy_manager.copy_speed = file_speed
+                        self.update_progress()
                     self.log_message(f"已拷贝: {file} ({self.copy_manager.format_size(file_size)})")
                 except Exception as e:
                     self.log_message(f"拷贝失败 {file}: {str(e)}")
@@ -1706,7 +1922,7 @@ class DITCopyTool:
         for source_item in self.source_items:
             if not self.copy_manager.copying:
                 break
-                
+            
             source_path = source_item['path']
             # 使用与拷贝时相同的路径构建逻辑，包括自定义名称
             folder_name = source_item.get('custom_name', source_item['name'])
@@ -1720,7 +1936,7 @@ class DITCopyTool:
             self.log_message(f"   验证目标路径: {dest_path}")
             if self.auto_folder_var.get() and self.copy_manager.date_folder:
                 self.log_message(f"   使用日期文件夹: {self.copy_manager.date_folder}")
-                
+            
             self.verify_folder(source_path, dest_path)
             
         # 验证完成，显示总结
@@ -1735,11 +1951,51 @@ class DITCopyTool:
         self.log_message(f"   总文件数: {self.copy_manager.total_md5_files}")
         self.log_message(f"   验证成功: {self.copy_manager.verified_files}")
         self.log_message(f"   验证失败: {self.copy_manager.total_md5_files - self.copy_manager.verified_files}")
-        self.log_message(f"   总数据量: {self.copy_manager.format_size(self.copy_manager.md5_calc_size)}")
-        self.log_message(f"   用时: {self.copy_manager.format_time(int(elapsed_time))}")
-        self.log_message(f"   平均速度: {self.copy_manager.format_size(int(self.copy_manager.md5_calc_speed))}/s")
-        self.log_message("="*60)
-        
+    
+    def verify_backup_destinations(self):
+        if not (self.multi_dest_var.get() and self.backup_dest_paths):
+            return
+        results = []
+        if self.auto_folder_var.get():
+            backup_date_folder = self.copy_manager.date_folder
+        for backup_dest in self.backup_dest_paths:
+            if not self.copy_manager.copying:
+                break
+            if self.auto_folder_var.get():
+                backup_final_dest = os.path.join(backup_dest, backup_date_folder)
+            else:
+                backup_final_dest = backup_dest
+            total_files = 0
+            verified_files = 0
+            for source_item in self.source_items:
+                source_path = source_item['path']
+                folder_name = source_item.get('custom_name', source_item['name'])
+                base_dest = os.path.join(backup_final_dest, folder_name)
+                for root, dirs, files in os.walk(source_path):
+                    rel_path = os.path.relpath(root, source_path)
+                    if rel_path == '.':
+                        current_dest = base_dest
+                    else:
+                        current_dest = os.path.join(base_dest, rel_path)
+                    for file in files:
+                        source_file = os.path.join(root, file)
+                        if self.only_media_var.get() and not self.is_media_file(source_file):
+                            continue
+                        total_files += 1
+                        dest_file = os.path.join(current_dest, file)
+                        if os.path.exists(dest_file):
+                            try:
+                                if os.path.getsize(source_file) == os.path.getsize(dest_file):
+                                    verified_files += 1
+                            except:
+                                verified_files += 1
+            results.append({
+                "destination": backup_dest,
+                "total": total_files,
+                "verified": verified_files
+            })
+        self.copy_manager.backup_results = results
+        self.log_message("备用目的地验证完成")
         self.copy_manager.verifying = False
         
     def verify_folder(self, source_path, dest_path):
@@ -1935,6 +2191,28 @@ class DITCopyTool:
             )
             
             self.update_stats()
+    
+    def update_backup_progress(self):
+        import time
+        if self.copy_manager.backup_total_files > 0:
+            file_progress = (self.copy_manager.backup_copied_files / self.copy_manager.backup_total_files) * 100
+            self.backup_progress.config(value=file_progress)
+            elapsed_time = 0
+            if self.copy_manager.backup_start_time > 0:
+                elapsed_time = time.time() - self.copy_manager.backup_start_time
+                if elapsed_time < 0:
+                    elapsed_time = 0
+            speed_files_s = 0
+            if elapsed_time > 0:
+                speed_files_s = self.copy_manager.backup_copied_files / elapsed_time
+            remaining_files = max(0, self.copy_manager.backup_total_files - self.copy_manager.backup_copied_files)
+            eta_seconds = 0
+            if speed_files_s > 0:
+                eta_seconds = remaining_files / speed_files_s
+            elapsed_str = self.format_time(elapsed_time)
+            eta_str = self.format_time(eta_seconds)
+            self.backup_status_label.config(text=f"备用拷贝 {self.copy_manager.current_backup_index}/{self.copy_manager.total_backup_destinations} | 速度: {speed_files_s:.1f} 文件/秒 | 已用: {elapsed_str} | 剩余: {eta_str}")
+            self.window.update()
             
     def update_stats(self):
         """更新统计信息"""
@@ -1949,6 +2227,9 @@ class DITCopyTool:
         self.verify_progress.config(value=100)
         self.copy_status_label.config(text="拷贝完成！")
         self.verify_status_label.config(text="验证完成！")
+        if self.multi_dest_var.get() and self.backup_dest_paths:
+            self.backup_progress.config(value=100)
+            self.backup_status_label.config(text="备用拷贝完成！")
         
         # 仅媒体拷贝提示
         try:
@@ -1983,7 +2264,8 @@ class DITCopyTool:
             total_size=self.copy_manager.copied_size,
             avg_speed=avg_speed,
             total_time=total_time,
-            verify_status=verify_status
+            verify_status=verify_status,
+            backup_results=self.copy_manager.backup_results if (self.multi_dest_var.get() and self.backup_dest_paths) else []
         )
         
     def copy_stopped(self):
@@ -2037,7 +2319,7 @@ class DITCopyTool:
         except Exception as e:
             messagebox.showerror("错误", f"无法打开官网: {str(e)}")
         
-    def celebrate_completion_with_stats(self, total_files, total_size, avg_speed, total_time, verify_status):
+    def celebrate_completion_with_stats(self, total_files, total_size, avg_speed, total_time, verify_status, backup_results=None):
         """增强版庆祝完成动画，包含统计信息"""
         # 创建庆祝窗口
         celebrate_window = tk.Toplevel(self.window)
@@ -2117,6 +2399,26 @@ class DITCopyTool:
             bootstyle="success"
         )
         verify_label.pack(anchor="w", pady=5)
+        
+        if backup_results:
+            br_title = ttk.Label(
+                stats_frame,
+                text="📦 备用目的地结果:",
+                font=("Arial", 12, "bold"),
+                bootstyle="info"
+            )
+            br_title.pack(anchor="w", pady=(15, 5))
+            for item in backup_results:
+                dest = item.get("destination", "")
+                total = item.get("total", 0)
+                verified = item.get("verified", 0)
+                line = ttk.Label(
+                    stats_frame,
+                    text=f"• {dest}：拷贝 {total}，验证 {verified}/{total}",
+                    font=("Arial", 11),
+                    bootstyle="secondary"
+                )
+                line.pack(anchor="w", pady=2)
         
         # 按钮框架
         button_frame = ttk.Frame(main_frame)
